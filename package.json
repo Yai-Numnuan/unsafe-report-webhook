@@ -1,0 +1,12 @@
+{
+  "name": "unsafe-report-webhook",
+  "version": "1.0.0",
+  "description": "LINE Webhook for Unsafe-Report System",
+  "main": "api/webhook.js",
+  "scripts": {
+    "start": "node api/webhook.js"
+  },
+  "dependencies": {
+    "@line/bot-sdk": "^8.0.0"
+  }
+}
