@@ -382,6 +382,14 @@ async function handleSelectUnit(event, unitName) {
         };
     }
     
+    // แปลง selectedUnits เป็น array ถ้าเป็น object (Firebase อาจแปลงเป็น object)
+    if (session.selectedUnits && !Array.isArray(session.selectedUnits)) {
+        session.selectedUnits = Object.values(session.selectedUnits);
+    }
+    if (!session.selectedUnits) {
+        session.selectedUnits = [];
+    }
+    
     // หา unit จากชื่อ
     const unitsArray = UNITS;
     let selectedUnit = unitsArray.find(u => u.name === unitName);
