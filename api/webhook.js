@@ -148,7 +148,8 @@ async function handleTextMessage(event) {
         await handleStatus(event);
     } else if (text === 'ช่วยเหลือ' || text === 'help') {
         await handleHelp(event);
-    } else if (text.startsWith('เลือกหน่วยงาน:') || originalText.match(/^กฟ[จอย]\./)) {
+    } else if (originalText.match(/^(ผ[ปกมบคสร][บกตสพรนค]?\.|กฟ[จสย]\.|อื่นๆ)/)) {
+        // ตรวจจับชื่อหน่วยงานที่ขึ้นต้นด้วย ผปบ. ผกส. ผมต. ผบส. ผคพ. ผบร. ผสน. ผปร. ผบค. ผบง. หรือ กฟส. กฟจ. หรือ อื่นๆ
         await handleSelectUnit(event, originalText);
     } else {
         // Default response
@@ -174,23 +175,119 @@ async function handleRegister(event) {
     // แปลงเป็น array ถ้าเป็น object
     const unitsArray = Array.isArray(units) ? units : Object.values(units);
     
-    // สร้าง Quick Reply สำหรับเลือกหน่วยงาน (แสดงเฉพาะ 13 หน่วยแรกก่อน)
-    const quickReplyItems = unitsArray.slice(0, 13).map(unit => ({
-        type: 'action',
-        action: {
-            type: 'message',
-            label: unit.name.substring(0, 20), // LINE จำกัด label 20 ตัวอักษร
-            text: unit.name
-        }
-    }));
+    // สร้าง Flex Message Carousel เพื่อแสดงครบ 25 หน่วยงาน
+    // แบ่งเป็น 3 กลุ่ม: กฟจ.ลำพูน (1-7), กฟส.S (8-19), กฟส.XS และอื่นๆ (20-25)
     
-    await replyLineMessage(event.replyToken, [{
-        type: 'text',
-        text: '📋 กรุณาเลือกหน่วยงานของคุณ:\n\n(เลือกจากปุ่มด้านล่าง หรือพิมพ์ชื่อหน่วยงาน)',
-        quickReply: {
-            items: quickReplyItems
+    const flexMessage = {
+        type: 'flex',
+        altText: 'เลือกหน่วยงานของคุณ',
+        contents: {
+            type: 'carousel',
+            contents: [
+                // Bubble 1: กฟจ.ลำพูน (หน่วยงาน 1-7)
+                {
+                    type: 'bubble',
+                    size: 'kilo',
+                    header: {
+                        type: 'box',
+                        layout: 'vertical',
+                        contents: [{
+                            type: 'text',
+                            text: '🏢 กฟจ.ลำพูน',
+                            weight: 'bold',
+                            size: 'md',
+                            color: '#1a73e8'
+                        }]
+                    },
+                    body: {
+                        type: 'box',
+                        layout: 'vertical',
+                        spacing: 'sm',
+                        contents: unitsArray.slice(0, 7).map(unit => ({
+                            type: 'button',
+                            action: {
+                                type: 'message',
+                                label: unit.name,
+                                text: unit.name
+                            },
+                            style: 'secondary',
+                            height: 'sm'
+                        }))
+                    }
+                },
+                // Bubble 2: กฟส.S - ป่าซาง/บ้านโฮ่ง/ลี้/บ้านธิ (หน่วยงาน 8-19)
+                {
+                    type: 'bubble',
+                    size: 'kilo',
+                    header: {
+                        type: 'box',
+                        layout: 'vertical',
+                        contents: [{
+                            type: 'text',
+                            text: '🏢 กฟส.S',
+                            weight: 'bold',
+                            size: 'md',
+                            color: '#1a73e8'
+                        }]
+                    },
+                    body: {
+                        type: 'box',
+                        layout: 'vertical',
+                        spacing: 'sm',
+                        contents: unitsArray.slice(7, 19).map(unit => ({
+                            type: 'button',
+                            action: {
+                                type: 'message',
+                                label: unit.name,
+                                text: unit.name
+                            },
+                            style: 'secondary',
+                            height: 'sm'
+                        }))
+                    }
+                },
+                // Bubble 3: กฟส.XS และอื่นๆ (หน่วยงาน 20-25)
+                {
+                    type: 'bubble',
+                    size: 'kilo',
+                    header: {
+                        type: 'box',
+                        layout: 'vertical',
+                        contents: [{
+                            type: 'text',
+                            text: '🏢 กฟส.XS และอื่นๆ',
+                            weight: 'bold',
+                            size: 'md',
+                            color: '#1a73e8'
+                        }]
+                    },
+                    body: {
+                        type: 'box',
+                        layout: 'vertical',
+                        spacing: 'sm',
+                        contents: unitsArray.slice(19, 25).map(unit => ({
+                            type: 'button',
+                            action: {
+                                type: 'message',
+                                label: unit.name,
+                                text: unit.name
+                            },
+                            style: 'secondary',
+                            height: 'sm'
+                        }))
+                    }
+                }
+            ]
         }
-    }]);
+    };
+    
+    await replyLineMessage(event.replyToken, [
+        {
+            type: 'text',
+            text: '📋 กรุณาเลือกหน่วยงานของคุณ:\n\n👉 เลื่อนซ้าย-ขวา เพื่อดูหน่วยงานทั้งหมด'
+        },
+        flexMessage
+    ]);
 }
 
 // Handle Unit Selection
