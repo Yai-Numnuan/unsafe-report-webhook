@@ -138,7 +138,7 @@ async function handleFollow(event) {
     
     const welcomeMessage = {
         type: 'text',
-        text: `🎉 ยินดีต้อนรับคุณ ${profile.displayName} สู่ระบบ Unsafe-Report กฟจ.ลำพูน!\n\n📝 กรุณาลงทะเบียนโดยพิมพ์ "ลงทะเบียน" เพื่อเลือกหน่วยงานของคุณ\n\nหรือพิมพ์ "ช่วยเหลือ" เพื่อดูคำสั่งที่ใช้ได้`
+        text: `🎉 ยินดีต้อนรับคุณ ${profile.displayName} สู่ระบบ Unsafe-Report กฟจ.ลำพูน!\n\n📌 ส่วนนี้เฉพาะ:\n• หัวหน้าหน่วยงาน\n• หรือผู้ที่ได้รับมอบหมาย\n\n📝 กรุณาพิมพ์ "ลงทะเบียน" เพื่อรับการแจ้งเตือนเฉพาะหน่วยงานของคุณ`
     };
     
     await replyLineMessage(event.replyToken, [welcomeMessage]);
