@@ -1,5 +1,6 @@
 // LINE Webhook for Unsafe-Report System
 // Deploy to Vercel
+// รองรับการเลือกหลายหน่วยงาน + ปุ่ม จป.เทคนิค
 
 const crypto = require('crypto');
 
@@ -7,7 +8,7 @@ const crypto = require('crypto');
 const LINE_CHANNEL_SECRET = process.env.LINE_CHANNEL_SECRET;
 const LINE_CHANNEL_ACCESS_TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN;
 
-// Firebase Configuration - แก้ไข URL ให้ถูกต้อง
+// Firebase Configuration
 const FIREBASE_URL = 'https://unsafe-report-default-rtdb.asia-southeast1.firebasedatabase.app';
 
 // ======================= HELPER FUNCTIONS =======================
@@ -120,6 +121,14 @@ const UNITS = [
     { id: 25, name: "อื่นๆ" }
 ];
 
+// ปุ่มสำเร็จรูป จป.เทคนิค - แต่ละ กฟส.S ดูแลหน่วยงานไหนบ้าง
+const JSP_PRESETS = {
+    "จป. กฟส.ป่าซาง": [8, 9, 10, 21],      // ผปร./ผบค./ผบง. กฟส.ป่าซาง + กฟส.นครเจดีย์
+    "จป. กฟส.บ้านโฮ่ง": [11, 12, 13, 22],   // ผปร./ผบค./ผบง. กฟส.บ้านโฮ่ง + กฟส.เวียงหนองล่อง
+    "จป. กฟส.ลี้": [14, 15, 16, 23, 24],    // ผปร./ผบค./ผบง. กฟส.ลี้ + กฟส.ทุ่งหัวช้าง + กฟส.แม่ตืน
+    "จป. กฟส.บ้านธิ": [17, 18, 19]          // ผปร./ผบค./ผบง. กฟส.บ้านธิ
+};
+
 // ======================= MESSAGE HANDLERS =======================
 
 // Handle Follow Event (เมื่อมีคนเพิ่มเพื่อน)
@@ -138,19 +147,28 @@ async function handleFollow(event) {
 // Handle Text Message
 async function handleTextMessage(event) {
     const userId = event.source.userId;
-    const text = event.message.text.trim().toLowerCase();
-    const originalText = event.message.text.trim();
+    const text = event.message.text.trim();
+    const textLower = text.toLowerCase();
     
     // ตรวจสอบคำสั่ง
-    if (text === 'ลงทะเบียน' || text === 'register') {
+    if (textLower === 'ลงทะเบียน' || textLower === 'register') {
         await handleRegister(event);
-    } else if (text === 'สถานะ' || text === 'status') {
+    } else if (textLower === 'เสร็จสิ้น' || textLower === 'done') {
+        await handleFinishRegistration(event);
+    } else if (textLower === 'ยกเลิก' || textLower === 'cancel') {
+        await handleCancelRegistration(event);
+    } else if (textLower === 'ล้างข้อมูล' || textLower === 'reset') {
+        await handleResetRegistration(event);
+    } else if (textLower === 'สถานะ' || textLower === 'status') {
         await handleStatus(event);
-    } else if (text === 'ช่วยเหลือ' || text === 'help') {
+    } else if (textLower === 'ช่วยเหลือ' || textLower === 'help') {
         await handleHelp(event);
-    } else if (originalText.match(/^(ผ[ปกมบคสร][บกตสพรนค]?\.|กฟ[จสย]\.|อื่นๆ)/)) {
-        // ตรวจจับชื่อหน่วยงานที่ขึ้นต้นด้วย ผปบ. ผกส. ผมต. ผบส. ผคพ. ผบร. ผสน. ผปร. ผบค. ผบง. หรือ กฟส. กฟจ. หรือ อื่นๆ
-        await handleSelectUnit(event, originalText);
+    } else if (JSP_PRESETS[text]) {
+        // ปุ่ม จป.เทคนิค
+        await handleJSPPreset(event, text);
+    } else if (text.match(/^(ผ[ปกมบคสร][บกตสพรนค]?\.|กฟ[จสย]\.|อื่นๆ)/)) {
+        // เลือกหน่วยงานทีละอัน
+        await handleSelectUnit(event, text);
     } else {
         // Default response
         await replyLineMessage(event.replyToken, [{
@@ -162,22 +180,26 @@ async function handleTextMessage(event) {
 
 // Handle Register Command
 async function handleRegister(event) {
+    const userId = event.source.userId;
+    
     // ดึงข้อมูลหน่วยงานจาก Firebase
     let units = await firebaseGet('units');
     
     // ถ้าไม่มีข้อมูลใน Firebase ให้ใช้ข้อมูล default และบันทึกลง Firebase
     if (!units || Object.keys(units).length === 0) {
-        // บันทึกข้อมูลหน่วยงานลง Firebase
         await firebaseSet('units', UNITS);
         units = UNITS;
     }
     
-    // แปลงเป็น array ถ้าเป็น object
     const unitsArray = Array.isArray(units) ? units : Object.values(units);
     
-    // สร้าง Flex Message Carousel เพื่อแสดงครบ 25 หน่วยงาน
-    // แบ่งเป็น 3 กลุ่ม: กฟจ.ลำพูน (1-7), กฟส.S (8-19), กฟส.XS และอื่นๆ (20-25)
+    // เริ่มต้น session การลงทะเบียน (เก็บหน่วยงานที่เลือกไว้ชั่วคราว)
+    await firebaseSet(`registrationSession/${userId}`, {
+        selectedUnits: [],
+        startedAt: new Date().toISOString()
+    });
     
+    // สร้าง Flex Message Carousel
     const flexMessage = {
         type: 'flex',
         altText: 'เลือกหน่วยงานของคุณ',
@@ -185,98 +207,13 @@ async function handleRegister(event) {
             type: 'carousel',
             contents: [
                 // Bubble 1: กฟจ.ลำพูน (หน่วยงาน 1-7)
-                {
-                    type: 'bubble',
-                    size: 'kilo',
-                    header: {
-                        type: 'box',
-                        layout: 'vertical',
-                        contents: [{
-                            type: 'text',
-                            text: '🏢 กฟจ.ลำพูน',
-                            weight: 'bold',
-                            size: 'md',
-                            color: '#1a73e8'
-                        }]
-                    },
-                    body: {
-                        type: 'box',
-                        layout: 'vertical',
-                        spacing: 'sm',
-                        contents: unitsArray.slice(0, 7).map(unit => ({
-                            type: 'button',
-                            action: {
-                                type: 'message',
-                                label: unit.name,
-                                text: unit.name
-                            },
-                            style: 'secondary',
-                            height: 'sm'
-                        }))
-                    }
-                },
-                // Bubble 2: กฟส.S - ป่าซาง/บ้านโฮ่ง/ลี้/บ้านธิ (หน่วยงาน 8-19)
-                {
-                    type: 'bubble',
-                    size: 'kilo',
-                    header: {
-                        type: 'box',
-                        layout: 'vertical',
-                        contents: [{
-                            type: 'text',
-                            text: '🏢 กฟส.S',
-                            weight: 'bold',
-                            size: 'md',
-                            color: '#1a73e8'
-                        }]
-                    },
-                    body: {
-                        type: 'box',
-                        layout: 'vertical',
-                        spacing: 'sm',
-                        contents: unitsArray.slice(7, 19).map(unit => ({
-                            type: 'button',
-                            action: {
-                                type: 'message',
-                                label: unit.name,
-                                text: unit.name
-                            },
-                            style: 'secondary',
-                            height: 'sm'
-                        }))
-                    }
-                },
+                createUnitBubble('🏢 กฟจ.ลำพูน', unitsArray.slice(0, 7)),
+                // Bubble 2: กฟส.S (หน่วยงาน 8-19)
+                createUnitBubble('🏢 กฟส.S', unitsArray.slice(7, 19)),
                 // Bubble 3: กฟส.XS และอื่นๆ (หน่วยงาน 20-25)
-                {
-                    type: 'bubble',
-                    size: 'kilo',
-                    header: {
-                        type: 'box',
-                        layout: 'vertical',
-                        contents: [{
-                            type: 'text',
-                            text: '🏢 กฟส.XS และอื่นๆ',
-                            weight: 'bold',
-                            size: 'md',
-                            color: '#1a73e8'
-                        }]
-                    },
-                    body: {
-                        type: 'box',
-                        layout: 'vertical',
-                        spacing: 'sm',
-                        contents: unitsArray.slice(19, 25).map(unit => ({
-                            type: 'button',
-                            action: {
-                                type: 'message',
-                                label: unit.name,
-                                text: unit.name
-                            },
-                            style: 'secondary',
-                            height: 'sm'
-                        }))
-                    }
-                }
+                createUnitBubble('🏢 กฟส.XS และอื่นๆ', unitsArray.slice(19, 25)),
+                // Bubble 4: ปุ่ม จป.เทคนิค
+                createJSPBubble()
             ]
         }
     };
@@ -284,32 +221,174 @@ async function handleRegister(event) {
     await replyLineMessage(event.replyToken, [
         {
             type: 'text',
-            text: '📋 กรุณาเลือกหน่วยงานของคุณ:\n\n👉 เลื่อนซ้าย-ขวา เพื่อดูหน่วยงานทั้งหมด'
+            text: '📋 กรุณาเลือกหน่วยงานของคุณ:\n\n👉 เลื่อนซ้าย-ขวา เพื่อดูหน่วยงานทั้งหมด\n👉 กดเลือกได้หลายหน่วยงาน\n👉 พิมพ์ "เสร็จสิ้น" เมื่อเลือกครบแล้ว\n\n💡 จป.เทคนิค: เลื่อนไปการ์ดสุดท้าย'
         },
         flexMessage
     ]);
 }
 
-// Handle Unit Selection
-async function handleSelectUnit(event, unitName) {
+// สร้าง Bubble สำหรับหน่วยงาน
+function createUnitBubble(title, units) {
+    return {
+        type: 'bubble',
+        size: 'kilo',
+        header: {
+            type: 'box',
+            layout: 'vertical',
+            contents: [{
+                type: 'text',
+                text: title,
+                weight: 'bold',
+                size: 'md',
+                color: '#1a73e8'
+            }]
+        },
+        body: {
+            type: 'box',
+            layout: 'vertical',
+            spacing: 'sm',
+            contents: units.map(unit => ({
+                type: 'button',
+                action: {
+                    type: 'message',
+                    label: unit.name,
+                    text: unit.name
+                },
+                style: 'secondary',
+                height: 'sm'
+            }))
+        }
+    };
+}
+
+// สร้าง Bubble สำหรับ จป.เทคนิค
+function createJSPBubble() {
+    return {
+        type: 'bubble',
+        size: 'kilo',
+        header: {
+            type: 'box',
+            layout: 'vertical',
+            contents: [{
+                type: 'text',
+                text: '👷 จป.เทคนิค',
+                weight: 'bold',
+                size: 'md',
+                color: '#e65100'
+            }]
+        },
+        body: {
+            type: 'box',
+            layout: 'vertical',
+            spacing: 'sm',
+            contents: [
+                {
+                    type: 'button',
+                    action: {
+                        type: 'message',
+                        label: 'จป. กฟส.ป่าซาง',
+                        text: 'จป. กฟส.ป่าซาง'
+                    },
+                    style: 'primary',
+                    height: 'sm',
+                    color: '#e65100'
+                },
+                {
+                    type: 'button',
+                    action: {
+                        type: 'message',
+                        label: 'จป. กฟส.บ้านโฮ่ง',
+                        text: 'จป. กฟส.บ้านโฮ่ง'
+                    },
+                    style: 'primary',
+                    height: 'sm',
+                    color: '#e65100'
+                },
+                {
+                    type: 'button',
+                    action: {
+                        type: 'message',
+                        label: 'จป. กฟส.ลี้',
+                        text: 'จป. กฟส.ลี้'
+                    },
+                    style: 'primary',
+                    height: 'sm',
+                    color: '#e65100'
+                },
+                {
+                    type: 'button',
+                    action: {
+                        type: 'message',
+                        label: 'จป. กฟส.บ้านธิ',
+                        text: 'จป. กฟส.บ้านธิ'
+                    },
+                    style: 'primary',
+                    height: 'sm',
+                    color: '#e65100'
+                }
+            ]
+        }
+    };
+}
+
+// Handle จป.เทคนิค Preset
+async function handleJSPPreset(event, presetName) {
     const userId = event.source.userId;
     const profile = await getLineProfile(userId);
     
-    // หา unit จากชื่อ
-    let units = await firebaseGet('units');
+    const unitIds = JSP_PRESETS[presetName];
+    const unitsArray = UNITS;
     
-    // ถ้าไม่มีข้อมูลใน Firebase ให้ใช้ข้อมูล default
-    if (!units || Object.keys(units).length === 0) {
-        await firebaseSet('units', UNITS);
-        units = UNITS;
+    // หาชื่อหน่วยงานจาก IDs
+    const selectedUnits = unitIds.map(id => {
+        const unit = unitsArray.find(u => u.id === id);
+        return unit ? { id: unit.id, name: unit.name } : null;
+    }).filter(u => u !== null);
+    
+    // บันทึกข้อมูลผู้ใช้ลง Firebase
+    const userData = {
+        odUserId: userId,
+        displayName: profile.displayName,
+        pictureUrl: profile.pictureUrl || '',
+        units: selectedUnits,
+        unitNames: selectedUnits.map(u => u.name),
+        role: presetName,
+        registeredAt: new Date().toISOString(),
+        status: 'active'
+    };
+    
+    await firebaseSet(`lineUsers/${userId}`, userData);
+    
+    // ลบ session
+    await firebaseSet(`registrationSession/${userId}`, null);
+    
+    const unitList = selectedUnits.map(u => `  • ${u.name}`).join('\n');
+    
+    await replyLineMessage(event.replyToken, [{
+        type: 'text',
+        text: `✅ ลงทะเบียนสำเร็จ!\n\n👤 ชื่อ: ${profile.displayName}\n👷 ตำแหน่ง: ${presetName}\n\n🏢 หน่วยงานที่รับแจ้งเตือน:\n${unitList}\n\n📬 คุณจะได้รับการแจ้งเตือนเมื่อมีรายงานใหม่จากหน่วยงานเหล่านี้`
+    }]);
+}
+
+// Handle Unit Selection (เลือกทีละหน่วยงาน)
+async function handleSelectUnit(event, unitName) {
+    const userId = event.source.userId;
+    
+    // ดึง session การลงทะเบียน
+    let session = await firebaseGet(`registrationSession/${userId}`);
+    
+    // ถ้าไม่มี session ให้สร้างใหม่
+    if (!session) {
+        session = {
+            selectedUnits: [],
+            startedAt: new Date().toISOString()
+        };
     }
     
-    const unitsArray = Array.isArray(units) ? units : Object.values(units);
-    
-    // ค้นหาหน่วยงานที่ตรงกัน
+    // หา unit จากชื่อ
+    const unitsArray = UNITS;
     let selectedUnit = unitsArray.find(u => u.name === unitName);
     
-    // ถ้าไม่เจอ ลองค้นหาแบบ partial match
     if (!selectedUnit) {
         selectedUnit = unitsArray.find(u => unitName.includes(u.name) || u.name.includes(unitName));
     }
@@ -322,22 +401,98 @@ async function handleSelectUnit(event, unitName) {
         return;
     }
     
+    // ตรวจสอบว่าเลือกซ้ำหรือไม่
+    const alreadySelected = session.selectedUnits.some(u => u.id === selectedUnit.id);
+    
+    if (alreadySelected) {
+        await replyLineMessage(event.replyToken, [{
+            type: 'text',
+            text: `⚠️ คุณเลือก "${selectedUnit.name}" ไว้แล้ว\n\n📋 หน่วยงานที่เลือกไว้:\n${session.selectedUnits.map(u => `  • ${u.name}`).join('\n')}\n\n👉 เลือกหน่วยงานเพิ่มได้อีก\n👉 พิมพ์ "เสร็จสิ้น" เมื่อเลือกครบแล้ว`
+        }]);
+        return;
+    }
+    
+    // เพิ่มหน่วยงานที่เลือก
+    session.selectedUnits.push({
+        id: selectedUnit.id,
+        name: selectedUnit.name
+    });
+    
+    // บันทึก session
+    await firebaseSet(`registrationSession/${userId}`, session);
+    
+    const unitList = session.selectedUnits.map(u => `  • ${u.name}`).join('\n');
+    
+    await replyLineMessage(event.replyToken, [{
+        type: 'text',
+        text: `✅ เพิ่ม "${selectedUnit.name}" แล้ว\n\n📋 หน่วยงานที่เลือกไว้ (${session.selectedUnits.length} หน่วยงาน):\n${unitList}\n\n👉 เลือกหน่วยงานเพิ่มได้อีก\n👉 พิมพ์ "เสร็จสิ้น" เมื่อเลือกครบแล้ว\n👉 พิมพ์ "ยกเลิก" เพื่อเริ่มใหม่`
+    }]);
+}
+
+// Handle Finish Registration
+async function handleFinishRegistration(event) {
+    const userId = event.source.userId;
+    const profile = await getLineProfile(userId);
+    
+    // ดึง session การลงทะเบียน
+    const session = await firebaseGet(`registrationSession/${userId}`);
+    
+    if (!session || !session.selectedUnits || session.selectedUnits.length === 0) {
+        await replyLineMessage(event.replyToken, [{
+            type: 'text',
+            text: '❌ คุณยังไม่ได้เลือกหน่วยงาน\n\nพิมพ์ "ลงทะเบียน" เพื่อเริ่มต้นใหม่'
+        }]);
+        return;
+    }
+    
     // บันทึกข้อมูลผู้ใช้ลง Firebase
     const userData = {
         odUserId: userId,
         displayName: profile.displayName,
         pictureUrl: profile.pictureUrl || '',
-        unitId: selectedUnit.id,
-        unitName: selectedUnit.name,
+        units: session.selectedUnits,
+        unitNames: session.selectedUnits.map(u => u.name),
         registeredAt: new Date().toISOString(),
         status: 'active'
     };
     
     await firebaseSet(`lineUsers/${userId}`, userData);
     
+    // ลบ session
+    await firebaseSet(`registrationSession/${userId}`, null);
+    
+    const unitList = session.selectedUnits.map(u => `  • ${u.name}`).join('\n');
+    
     await replyLineMessage(event.replyToken, [{
         type: 'text',
-        text: `✅ ลงทะเบียนสำเร็จ!\n\n👤 ชื่อ: ${profile.displayName}\n🏢 หน่วยงาน: ${selectedUnit.name}\n\n📬 คุณจะได้รับการแจ้งเตือนเมื่อมีรายงานใหม่ที่เกี่ยวข้องกับหน่วยงานของคุณ`
+        text: `✅ ลงทะเบียนสำเร็จ!\n\n👤 ชื่อ: ${profile.displayName}\n\n🏢 หน่วยงานที่รับแจ้งเตือน (${session.selectedUnits.length} หน่วยงาน):\n${unitList}\n\n📬 คุณจะได้รับการแจ้งเตือนเมื่อมีรายงานใหม่จากหน่วยงานเหล่านี้`
+    }]);
+}
+
+// Handle Cancel Registration
+async function handleCancelRegistration(event) {
+    const userId = event.source.userId;
+    
+    // ลบ session
+    await firebaseSet(`registrationSession/${userId}`, null);
+    
+    await replyLineMessage(event.replyToken, [{
+        type: 'text',
+        text: '🔄 ยกเลิกการลงทะเบียนแล้ว\n\nพิมพ์ "ลงทะเบียน" เพื่อเริ่มต้นใหม่'
+    }]);
+}
+
+// Handle Reset Registration (ล้างข้อมูลทั้งหมด)
+async function handleResetRegistration(event) {
+    const userId = event.source.userId;
+    
+    // ลบข้อมูลผู้ใช้
+    await firebaseSet(`lineUsers/${userId}`, null);
+    await firebaseSet(`registrationSession/${userId}`, null);
+    
+    await replyLineMessage(event.replyToken, [{
+        type: 'text',
+        text: '🗑️ ล้างข้อมูลการลงทะเบียนแล้ว\n\nพิมพ์ "ลงทะเบียน" เพื่อลงทะเบียนใหม่'
     }]);
 }
 
@@ -356,9 +511,21 @@ async function handleStatus(event) {
         return;
     }
     
+    // รองรับทั้งแบบเดิม (unitName) และแบบใหม่ (unitNames)
+    let unitList;
+    if (userData.unitNames && userData.unitNames.length > 0) {
+        unitList = userData.unitNames.map(name => `  • ${name}`).join('\n');
+    } else if (userData.unitName) {
+        unitList = `  • ${userData.unitName}`;
+    } else {
+        unitList = '  (ไม่มีข้อมูล)';
+    }
+    
+    const roleText = userData.role ? `\n👷 ตำแหน่ง: ${userData.role}` : '';
+    
     await replyLineMessage(event.replyToken, [{
         type: 'text',
-        text: `📊 สถานะการลงทะเบียน\n\n👤 ชื่อ: ${userData.displayName}\n🏢 หน่วยงาน: ${userData.unitName}\n📅 ลงทะเบียนเมื่อ: ${new Date(userData.registeredAt).toLocaleDateString('th-TH')}\n✅ สถานะ: พร้อมรับการแจ้งเตือน`
+        text: `📊 สถานะการลงทะเบียน\n\n👤 ชื่อ: ${userData.displayName}${roleText}\n\n🏢 หน่วยงานที่รับแจ้งเตือน:\n${unitList}\n\n📅 ลงทะเบียนเมื่อ: ${new Date(userData.registeredAt).toLocaleDateString('th-TH')}\n✅ สถานะ: พร้อมรับการแจ้งเตือน\n\n💡 พิมพ์ "ล้างข้อมูล" เพื่อลงทะเบียนใหม่`
     }]);
 }
 
@@ -369,8 +536,20 @@ async function handleHelp(event) {
 🔹 คำสั่งที่ใช้ได้:
 
 1️⃣ "ลงทะเบียน" - ลงทะเบียนเข้าใช้งานระบบ
-2️⃣ "สถานะ" - ตรวจสอบสถานะการลงทะเบียน
-3️⃣ "ช่วยเหลือ" - แสดงคู่มือการใช้งาน
+2️⃣ "เสร็จสิ้น" - บันทึกหน่วยงานที่เลือก
+3️⃣ "ยกเลิก" - ยกเลิกการเลือกหน่วยงาน
+4️⃣ "ล้างข้อมูล" - ล้างการลงทะเบียนเพื่อเริ่มใหม่
+5️⃣ "สถานะ" - ตรวจสอบสถานะการลงทะเบียน
+6️⃣ "ช่วยเหลือ" - แสดงคู่มือการใช้งาน
+
+💡 วิธีลงทะเบียน:
+• พิมพ์ "ลงทะเบียน"
+• กดเลือกหน่วยงาน (เลือกได้หลายหน่วยงาน)
+• พิมพ์ "เสร็จสิ้น" เมื่อเลือกครบ
+
+👷 สำหรับ จป.เทคนิค:
+• เลื่อนไปการ์ดสุดท้าย
+• กดปุ่ม จป. ของ กฟส. ที่ดูแล
 
 🔔 การแจ้งเตือน:
 • เมื่อมีรายงานใหม่มอบหมายให้หน่วยงานของคุณ
@@ -387,23 +566,35 @@ async function handleHelp(event) {
 
 // ======================= NOTIFICATION FUNCTIONS =======================
 
-// ส่งการแจ้งเตือนไปยังหัวหน้าหน่วยงาน
+// ส่งการแจ้งเตือนไปยังผู้ใช้ที่ลงทะเบียนหน่วยงานนั้น
 async function notifyUnitHead(unitName, message) {
     // ดึงข้อมูล LINE Users ทั้งหมด
     const lineUsers = await firebaseGet('lineUsers');
     
     if (!lineUsers) return { success: false, message: 'No LINE users registered' };
     
-    // หา users ที่อยู่ในหน่วยงานนี้
-    const targetUsers = Object.values(lineUsers).filter(user => 
-        user.unitName === unitName && user.status === 'active'
-    );
+    // หา users ที่ลงทะเบียนหน่วยงานนี้ (รองรับทั้งแบบเดิมและแบบใหม่)
+    const targetUsers = Object.values(lineUsers).filter(user => {
+        if (user.status !== 'active') return false;
+        
+        // แบบใหม่: มี unitNames array
+        if (user.unitNames && user.unitNames.length > 0) {
+            return user.unitNames.includes(unitName);
+        }
+        
+        // แบบเดิม: มี unitName เดียว
+        if (user.unitName) {
+            return user.unitName === unitName;
+        }
+        
+        return false;
+    });
     
     if (targetUsers.length === 0) {
         return { success: false, message: 'No users found for this unit' };
     }
     
-    // ส่งข้อความไปยังทุกคนในหน่วยงาน
+    // ส่งข้อความไปยังทุกคนที่ลงทะเบียนหน่วยงานนี้
     const results = await Promise.all(
         targetUsers.map(user => sendLineMessage(user.odUserId, [{ type: 'text', text: message }]))
     );
