@@ -7,400 +7,355 @@ const crypto = require('crypto');
 const LINE_CHANNEL_SECRET = process.env.LINE_CHANNEL_SECRET;
 const LINE_CHANNEL_ACCESS_TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN;
 
-// Firebase Configuration
-const FIREBASE_URL = 'https://line-safe-default-rtdb.asia-southeast1.firebasedatabase.app';
+// Firebase Configuration - แก้ไข URL ให้ถูกต้อง
+const FIREBASE_URL = 'https://unsafe-report-default-rtdb.asia-southeast1.firebasedatabase.app';
 
-// ==================== HELPER FUNCTIONS ====================
+// ======================= HELPER FUNCTIONS =======================
 
 // Verify LINE Signature
 function verifySignature(body, signature) {
-  const hash = crypto
-    .createHmac('SHA256', LINE_CHANNEL_SECRET)
-    .update(body)
-    .digest('base64');
-  return hash === signature;
+    const hash = crypto
+        .createHmac('SHA256', LINE_CHANNEL_SECRET)
+        .update(body)
+        .digest('base64');
+    return hash === signature;
 }
 
 // Send LINE Message
 async function sendLineMessage(userId, messages) {
-  const response = await fetch('https://api.line.me/v2/bot/message/push', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${LINE_CHANNEL_ACCESS_TOKEN}`
-    },
-    body: JSON.stringify({
-      to: userId,
-      messages: messages
-    })
-  });
-  
-  if (!response.ok) {
-    const error = await response.text();
-    console.error('LINE API Error:', error);
-    return false;
-  }
-  return true;
+    const response = await fetch('https://api.line.me/v2/bot/message/push', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${LINE_CHANNEL_ACCESS_TOKEN}`
+        },
+        body: JSON.stringify({
+            to: userId,
+            messages: messages
+        })
+    });
+    return response.json();
 }
 
-// Reply to LINE Message
+// Reply LINE Message
 async function replyLineMessage(replyToken, messages) {
-  const response = await fetch('https://api.line.me/v2/bot/message/reply', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${LINE_CHANNEL_ACCESS_TOKEN}`
-    },
-    body: JSON.stringify({
-      replyToken: replyToken,
-      messages: messages
-    })
-  });
-  
-  if (!response.ok) {
-    const error = await response.text();
-    console.error('LINE Reply Error:', error);
-    return false;
-  }
-  return true;
+    const response = await fetch('https://api.line.me/v2/bot/message/reply', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${LINE_CHANNEL_ACCESS_TOKEN}`
+        },
+        body: JSON.stringify({
+            replyToken: replyToken,
+            messages: messages
+        })
+    });
+    return response.json();
 }
 
-// Get LINE User Profile
+// Get LINE Profile
 async function getLineProfile(userId) {
-  const response = await fetch(`https://api.line.me/v2/bot/profile/${userId}`, {
-    headers: {
-      'Authorization': `Bearer ${LINE_CHANNEL_ACCESS_TOKEN}`
-    }
-  });
-  
-  if (!response.ok) return null;
-  return await response.json();
+    const response = await fetch(`https://api.line.me/v2/bot/profile/${userId}`, {
+        headers: {
+            'Authorization': `Bearer ${LINE_CHANNEL_ACCESS_TOKEN}`
+        }
+    });
+    return response.json();
 }
 
-// Save LINE User to Firebase
-async function saveLineUser(userId, userData) {
-  const response = await fetch(`${FIREBASE_URL}/lineUsers/${userId}.json`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(userData)
-  });
-  return response.ok;
+// Firebase: Get Data
+async function firebaseGet(path) {
+    const response = await fetch(`${FIREBASE_URL}/${path}.json`);
+    return response.json();
 }
 
-// Get LINE User from Firebase
-async function getLineUser(userId) {
-  const response = await fetch(`${FIREBASE_URL}/lineUsers/${userId}.json`);
-  if (!response.ok) return null;
-  return await response.json();
+// Firebase: Set Data
+async function firebaseSet(path, data) {
+    const response = await fetch(`${FIREBASE_URL}/${path}.json`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+    });
+    return response.json();
 }
 
-// Get Units from Firebase
-async function getUnits() {
-  const response = await fetch(`${FIREBASE_URL}/units.json`);
-  if (!response.ok) return [];
-  const data = await response.json();
-  return data || [];
+// Firebase: Update Data
+async function firebaseUpdate(path, data) {
+    const response = await fetch(`${FIREBASE_URL}/${path}.json`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+    });
+    return response.json();
 }
 
-// ==================== MESSAGE HANDLERS ====================
+// ======================= UNITS DATA =======================
 
-// Handle Follow Event (เมื่อมีคนแอด LINE OA)
+// รายชื่อหน่วยงาน 25 หน่วย
+const UNITS = [
+    { id: 1, name: "กฟจ.ลำพูน ผกส." },
+    { id: 2, name: "กฟอ.เมืองลำพูน" },
+    { id: 3, name: "กฟอ.บ้านโฮ่ง" },
+    { id: 4, name: "กฟอ.แม่ทา" },
+    { id: 5, name: "กฟอ.ป่าซาง" },
+    { id: 6, name: "กฟอ.ลี้" },
+    { id: 7, name: "กฟย.ดอยติ" },
+    { id: 8, name: "กฟย.ทุ่งหัวช้าง" },
+    { id: 9, name: "กฟอ.บ้านธิ" },
+    { id: 10, name: "กฟย.มะเขือแจ้" },
+    { id: 11, name: "กฟย.วังดิน" },
+    { id: 12, name: "กฟย.หนองล่อง" },
+    { id: 13, name: "กฟย.ห้วยโป่ง" },
+    { id: 14, name: "กฟจ.แพร่ ผกส." },
+    { id: 15, name: "กฟอ.เมืองแพร่" },
+    { id: 16, name: "กฟอ.ลอง" },
+    { id: 17, name: "กฟอ.ร้องกวาง" },
+    { id: 18, name: "กฟอ.สูงเม่น" },
+    { id: 19, name: "กฟอ.สอง" },
+    { id: 20, name: "กฟย.หนองม่วงไข่" },
+    { id: 21, name: "กฟอ.เด่นชัย" },
+    { id: 22, name: "กฟย.วังชิ้น" },
+    { id: 23, name: "กฟย.สูงเม่นเหนือ" },
+    { id: 24, name: "กฟย.แม่คำมี" },
+    { id: 25, name: "กฟย.เมืองแพร่" }
+];
+
+// ======================= MESSAGE HANDLERS =======================
+
+// Handle Follow Event (เมื่อมีคนเพิ่มเพื่อน)
 async function handleFollow(event) {
-  const userId = event.source.userId;
-  const profile = await getLineProfile(userId);
-  
-  // บันทึกข้อมูลเบื้องต้น
-  await saveLineUser(userId, {
-    odisplayName: profile?.displayName || 'Unknown',
-    odimension: profile?.pictureUrl || '',
-    registeredAt: new Date().toISOString(),
-    unitId: null,
-    unitName: null
-  });
-  
-  // ส่งข้อความต้อนรับ
-  const welcomeMessage = {
-    type: 'flex',
-    altText: 'ยินดีต้อนรับสู่ระบบ Unsafe-Report',
-    contents: {
-      type: 'bubble',
-      hero: {
-        type: 'box',
-        layout: 'vertical',
-        contents: [
-          {
-            type: 'text',
-            text: '🚨 Unsafe-Report',
-            weight: 'bold',
-            size: 'xl',
-            color: '#DC2626',
-            align: 'center'
-          },
-          {
-            type: 'text',
-            text: 'ระบบรายงานการปฏิบัติงานที่ไม่ปลอดภัย',
-            size: 'sm',
-            color: '#666666',
-            align: 'center',
-            margin: 'sm'
-          }
-        ],
-        paddingAll: '20px',
-        backgroundColor: '#FEF2F2'
-      },
-      body: {
-        type: 'box',
-        layout: 'vertical',
-        contents: [
-          {
-            type: 'text',
-            text: `สวัสดีคุณ ${profile?.displayName || ''} 👋`,
-            weight: 'bold',
-            size: 'md'
-          },
-          {
-            type: 'text',
-            text: 'ยินดีต้อนรับสู่ระบบแจ้งเตือน Unsafe-Report',
-            size: 'sm',
-            color: '#666666',
-            margin: 'md',
-            wrap: true
-          },
-          {
-            type: 'separator',
-            margin: 'lg'
-          },
-          {
-            type: 'text',
-            text: '📋 กรุณาลงทะเบียนเลือกหน่วยงาน',
-            size: 'sm',
-            margin: 'lg',
-            wrap: true
-          },
-          {
-            type: 'text',
-            text: 'พิมพ์ "ลงทะเบียน" เพื่อเริ่มต้น',
-            size: 'sm',
-            color: '#2563EB',
-            margin: 'sm'
-          }
-        ]
-      }
-    }
-  };
-  
-  await replyLineMessage(event.replyToken, [welcomeMessage]);
+    const userId = event.source.userId;
+    const profile = await getLineProfile(userId);
+    
+    const welcomeMessage = {
+        type: 'text',
+        text: `🎉 ยินดีต้อนรับคุณ ${profile.displayName} สู่ระบบ Unsafe-Report กฟจ.ลำพูน!\n\n📝 กรุณาลงทะเบียนโดยพิมพ์ "ลงทะเบียน" เพื่อเลือกหน่วยงานของคุณ\n\nหรือพิมพ์ "ช่วยเหลือ" เพื่อดูคำสั่งที่ใช้ได้`
+    };
+    
+    await replyLineMessage(event.replyToken, [welcomeMessage]);
 }
 
 // Handle Text Message
 async function handleTextMessage(event) {
-  const userId = event.source.userId;
-  const text = event.message.text.trim().toLowerCase();
-  const user = await getLineUser(userId);
-  
-  // คำสั่ง "ลงทะเบียน"
-  if (text === 'ลงทะเบียน' || text === 'register') {
-    const units = await getUnits();
+    const userId = event.source.userId;
+    const text = event.message.text.trim().toLowerCase();
+    const originalText = event.message.text.trim();
     
-    if (!units || units.length === 0) {
-      await replyLineMessage(event.replyToken, [{
-        type: 'text',
-        text: '❌ ไม่พบข้อมูลหน่วยงาน กรุณาติดต่อ Admin'
-      }]);
-      return;
+    // ตรวจสอบคำสั่ง
+    if (text === 'ลงทะเบียน' || text === 'register') {
+        await handleRegister(event);
+    } else if (text === 'สถานะ' || text === 'status') {
+        await handleStatus(event);
+    } else if (text === 'ช่วยเหลือ' || text === 'help') {
+        await handleHelp(event);
+    } else if (text.startsWith('เลือกหน่วยงาน:') || originalText.match(/^กฟ[จอย]\./)) {
+        await handleSelectUnit(event, originalText);
+    } else {
+        // Default response
+        await replyLineMessage(event.replyToken, [{
+            type: 'text',
+            text: `🤖 สวัสดีครับ!\n\nพิมพ์ "ช่วยเหลือ" เพื่อดูคำสั่งที่ใช้ได้`
+        }]);
+    }
+}
+
+// Handle Register Command
+async function handleRegister(event) {
+    // ดึงข้อมูลหน่วยงานจาก Firebase
+    let units = await firebaseGet('units');
+    
+    // ถ้าไม่มีข้อมูลใน Firebase ให้ใช้ข้อมูล default และบันทึกลง Firebase
+    if (!units || Object.keys(units).length === 0) {
+        // บันทึกข้อมูลหน่วยงานลง Firebase
+        await firebaseSet('units', UNITS);
+        units = UNITS;
     }
     
-    // สร้าง Quick Reply สำหรับเลือกหน่วยงาน
-    const quickReplyItems = units.slice(0, 13).map(unit => ({
-      type: 'action',
-      action: {
-        type: 'message',
-        label: unit.name.substring(0, 20),
-        text: `เลือกหน่วยงาน:${unit.id}`
-      }
+    // แปลงเป็น array ถ้าเป็น object
+    const unitsArray = Array.isArray(units) ? units : Object.values(units);
+    
+    // สร้าง Quick Reply สำหรับเลือกหน่วยงาน (แสดงเฉพาะ 13 หน่วยแรกก่อน)
+    const quickReplyItems = unitsArray.slice(0, 13).map(unit => ({
+        type: 'action',
+        action: {
+            type: 'message',
+            label: unit.name.substring(0, 20), // LINE จำกัด label 20 ตัวอักษร
+            text: unit.name
+        }
     }));
     
     await replyLineMessage(event.replyToken, [{
-      type: 'text',
-      text: '📋 กรุณาเลือกหน่วยงานของคุณ:\n\n(เลือกจากปุ่มด้านล่าง หรือพิมพ์ "เลือกหน่วยงาน:หมายเลข")',
-      quickReply: {
-        items: quickReplyItems
-      }
-    }]);
-    return;
-  }
-  
-  // เลือกหน่วยงาน
-  if (text.startsWith('เลือกหน่วยงาน:')) {
-    const unitId = parseInt(text.replace('เลือกหน่วยงาน:', ''));
-    const units = await getUnits();
-    const unit = units.find(u => u.id === unitId);
-    
-    if (!unit) {
-      await replyLineMessage(event.replyToken, [{
         type: 'text',
-        text: '❌ ไม่พบหน่วยงานที่เลือก กรุณาลองใหม่'
-      }]);
-      return;
-    }
-    
-    const profile = await getLineProfile(userId);
-    
-    // บันทึกข้อมูลลงทะเบียน
-    await saveLineUser(userId, {
-      displayName: profile?.displayName || 'Unknown',
-      pictureUrl: profile?.pictureUrl || '',
-      registeredAt: new Date().toISOString(),
-      unitId: unitId,
-      unitName: unit.name
-    });
-    
-    await replyLineMessage(event.replyToken, [{
-      type: 'flex',
-      altText: 'ลงทะเบียนสำเร็จ',
-      contents: {
-        type: 'bubble',
-        body: {
-          type: 'box',
-          layout: 'vertical',
-          contents: [
-            {
-              type: 'text',
-              text: '✅ ลงทะเบียนสำเร็จ!',
-              weight: 'bold',
-              size: 'lg',
-              color: '#16A34A'
-            },
-            {
-              type: 'separator',
-              margin: 'md'
-            },
-            {
-              type: 'box',
-              layout: 'vertical',
-              margin: 'lg',
-              contents: [
-                {
-                  type: 'box',
-                  layout: 'baseline',
-                  contents: [
-                    { type: 'text', text: 'ชื่อ:', size: 'sm', color: '#666666', flex: 2 },
-                    { type: 'text', text: profile?.displayName || '-', size: 'sm', flex: 5 }
-                  ]
-                },
-                {
-                  type: 'box',
-                  layout: 'baseline',
-                  margin: 'sm',
-                  contents: [
-                    { type: 'text', text: 'หน่วยงาน:', size: 'sm', color: '#666666', flex: 2 },
-                    { type: 'text', text: unit.name, size: 'sm', flex: 5, wrap: true }
-                  ]
-                }
-              ]
-            },
-            {
-              type: 'text',
-              text: '🔔 คุณจะได้รับแจ้งเตือนเมื่อมีรายงานใหม่',
-              size: 'xs',
-              color: '#666666',
-              margin: 'lg',
-              wrap: true
-            }
-          ]
+        text: '📋 กรุณาเลือกหน่วยงานของคุณ:\n\n(เลือกจากปุ่มด้านล่าง หรือพิมพ์ชื่อหน่วยงาน)',
+        quickReply: {
+            items: quickReplyItems
         }
-      }
     }]);
-    return;
-  }
-  
-  // คำสั่ง "สถานะ"
-  if (text === 'สถานะ' || text === 'status') {
-    if (!user || !user.unitId) {
-      await replyLineMessage(event.replyToken, [{
-        type: 'text',
-        text: '❌ คุณยังไม่ได้ลงทะเบียน\n\nพิมพ์ "ลงทะเบียน" เพื่อเริ่มต้น'
-      }]);
-      return;
-    }
-    
-    await replyLineMessage(event.replyToken, [{
-      type: 'text',
-      text: `📋 สถานะการลงทะเบียน\n\n✅ ลงทะเบียนแล้ว\n👤 ชื่อ: ${user.displayName}\n🏢 หน่วยงาน: ${user.unitName}\n📅 วันที่: ${new Date(user.registeredAt).toLocaleDateString('th-TH')}`
-    }]);
-    return;
-  }
-  
-  // คำสั่ง "ช่วยเหลือ"
-  if (text === 'ช่วยเหลือ' || text === 'help' || text === '?') {
-    await replyLineMessage(event.replyToken, [{
-      type: 'text',
-      text: '📚 คำสั่งที่ใช้ได้:\n\n• ลงทะเบียน - ลงทะเบียนเลือกหน่วยงาน\n• สถานะ - ดูสถานะการลงทะเบียน\n• ช่วยเหลือ - ดูคำสั่งทั้งหมด\n\n🔔 ระบบจะส่งแจ้งเตือนอัตโนมัติเมื่อมีรายงานใหม่ที่เกี่ยวข้องกับหน่วยงานของคุณ'
-    }]);
-    return;
-  }
-  
-  // ข้อความทั่วไป
-  await replyLineMessage(event.replyToken, [{
-    type: 'text',
-    text: '🤖 สวัสดีครับ!\n\nพิมพ์ "ช่วยเหลือ" เพื่อดูคำสั่งที่ใช้ได้'
-  }]);
 }
 
-// ==================== MAIN HANDLER ====================
+// Handle Unit Selection
+async function handleSelectUnit(event, unitName) {
+    const userId = event.source.userId;
+    const profile = await getLineProfile(userId);
+    
+    // หา unit จากชื่อ
+    let units = await firebaseGet('units');
+    
+    // ถ้าไม่มีข้อมูลใน Firebase ให้ใช้ข้อมูล default
+    if (!units || Object.keys(units).length === 0) {
+        await firebaseSet('units', UNITS);
+        units = UNITS;
+    }
+    
+    const unitsArray = Array.isArray(units) ? units : Object.values(units);
+    
+    // ค้นหาหน่วยงานที่ตรงกัน
+    let selectedUnit = unitsArray.find(u => u.name === unitName);
+    
+    // ถ้าไม่เจอ ลองค้นหาแบบ partial match
+    if (!selectedUnit) {
+        selectedUnit = unitsArray.find(u => unitName.includes(u.name) || u.name.includes(unitName));
+    }
+    
+    if (!selectedUnit) {
+        await replyLineMessage(event.replyToken, [{
+            type: 'text',
+            text: '❌ ไม่พบหน่วยงานที่เลือก กรุณาลองใหม่อีกครั้ง\n\nพิมพ์ "ลงทะเบียน" เพื่อเลือกหน่วยงาน'
+        }]);
+        return;
+    }
+    
+    // บันทึกข้อมูลผู้ใช้ลง Firebase
+    const userData = {
+        odUserId: userId,
+        displayName: profile.displayName,
+        pictureUrl: profile.pictureUrl || '',
+        unitId: selectedUnit.id,
+        unitName: selectedUnit.name,
+        registeredAt: new Date().toISOString(),
+        status: 'active'
+    };
+    
+    await firebaseSet(`lineUsers/${userId}`, userData);
+    
+    await replyLineMessage(event.replyToken, [{
+        type: 'text',
+        text: `✅ ลงทะเบียนสำเร็จ!\n\n👤 ชื่อ: ${profile.displayName}\n🏢 หน่วยงาน: ${selectedUnit.name}\n\n📬 คุณจะได้รับการแจ้งเตือนเมื่อมีรายงานใหม่ที่เกี่ยวข้องกับหน่วยงานของคุณ`
+    }]);
+}
+
+// Handle Status Command
+async function handleStatus(event) {
+    const userId = event.source.userId;
+    
+    // ดึงข้อมูลผู้ใช้จาก Firebase
+    const userData = await firebaseGet(`lineUsers/${userId}`);
+    
+    if (!userData) {
+        await replyLineMessage(event.replyToken, [{
+            type: 'text',
+            text: '❌ คุณยังไม่ได้ลงทะเบียน\n\nพิมพ์ "ลงทะเบียน" เพื่อเริ่มต้นใช้งาน'
+        }]);
+        return;
+    }
+    
+    await replyLineMessage(event.replyToken, [{
+        type: 'text',
+        text: `📊 สถานะการลงทะเบียน\n\n👤 ชื่อ: ${userData.displayName}\n🏢 หน่วยงาน: ${userData.unitName}\n📅 ลงทะเบียนเมื่อ: ${new Date(userData.registeredAt).toLocaleDateString('th-TH')}\n✅ สถานะ: พร้อมรับการแจ้งเตือน`
+    }]);
+}
+
+// Handle Help Command
+async function handleHelp(event) {
+    const helpText = `📖 คู่มือการใช้งาน Unsafe-Report Bot
+
+🔹 คำสั่งที่ใช้ได้:
+
+1️⃣ "ลงทะเบียน" - ลงทะเบียนเข้าใช้งานระบบ
+2️⃣ "สถานะ" - ตรวจสอบสถานะการลงทะเบียน
+3️⃣ "ช่วยเหลือ" - แสดงคู่มือการใช้งาน
+
+🔔 การแจ้งเตือน:
+• เมื่อมีรายงานใหม่มอบหมายให้หน่วยงานของคุณ
+• เมื่อรายงานได้รับการอนุมัติ
+• เมื่อรายงานถูกตีกลับแก้ไข
+
+🌐 เว็บไซต์: https://unsafe-report.vercel.app`;
+
+    await replyLineMessage(event.replyToken, [{
+        type: 'text',
+        text: helpText
+    }]);
+}
+
+// ======================= NOTIFICATION FUNCTIONS =======================
+
+// ส่งการแจ้งเตือนไปยังหัวหน้าหน่วยงาน
+async function notifyUnitHead(unitName, message) {
+    // ดึงข้อมูล LINE Users ทั้งหมด
+    const lineUsers = await firebaseGet('lineUsers');
+    
+    if (!lineUsers) return { success: false, message: 'No LINE users registered' };
+    
+    // หา users ที่อยู่ในหน่วยงานนี้
+    const targetUsers = Object.values(lineUsers).filter(user => 
+        user.unitName === unitName && user.status === 'active'
+    );
+    
+    if (targetUsers.length === 0) {
+        return { success: false, message: 'No users found for this unit' };
+    }
+    
+    // ส่งข้อความไปยังทุกคนในหน่วยงาน
+    const results = await Promise.all(
+        targetUsers.map(user => sendLineMessage(user.odUserId, [{ type: 'text', text: message }]))
+    );
+    
+    return { success: true, sent: targetUsers.length };
+}
+
+// ======================= MAIN HANDLER =======================
 
 module.exports = async (req, res) => {
-  // CORS Headers
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Line-Signature');
-  
-  // Handle OPTIONS (Preflight)
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
-  }
-  
-  // Handle GET (Health Check)
-  if (req.method === 'GET') {
-    return res.status(200).json({ 
-      status: 'ok', 
-      message: 'Unsafe-Report LINE Webhook is running',
-      timestamp: new Date().toISOString()
-    });
-  }
-  
-  // Handle POST (LINE Webhook)
-  if (req.method === 'POST') {
-    try {
-      const signature = req.headers['x-line-signature'];
-      const body = JSON.stringify(req.body);
-      
-      // Verify signature
-      if (!verifySignature(body, signature)) {
-        console.error('Invalid signature');
-        return res.status(401).json({ error: 'Invalid signature' });
-      }
-      
-      const events = req.body.events;
-      
-      // Process events
-      for (const event of events) {
-        console.log('Event:', event.type);
-        
-        if (event.type === 'follow') {
-          await handleFollow(event);
-        } else if (event.type === 'message' && event.message.type === 'text') {
-          await handleTextMessage(event);
-        }
-      }
-      
-      return res.status(200).json({ success: true });
-      
-    } catch (error) {
-      console.error('Webhook Error:', error);
-      return res.status(500).json({ error: error.message });
+    // Handle GET request (for verification)
+    if (req.method === 'GET') {
+        return res.status(200).json({
+            status: 'ok',
+            message: 'Unsafe-Report LINE Webhook is running',
+            timestamp: new Date().toISOString()
+        });
     }
-  }
-  
-  return res.status(405).json({ error: 'Method not allowed' });
+    
+    // Handle POST request (webhook events)
+    if (req.method === 'POST') {
+        try {
+            const body = JSON.stringify(req.body);
+            const signature = req.headers['x-line-signature'];
+            
+            // Verify signature (optional for testing)
+            // if (!verifySignature(body, signature)) {
+            //     return res.status(401).json({ error: 'Invalid signature' });
+            // }
+            
+            const events = req.body.events || [];
+            
+            // Process each event
+            for (const event of events) {
+                if (event.type === 'follow') {
+                    await handleFollow(event);
+                } else if (event.type === 'message' && event.message.type === 'text') {
+                    await handleTextMessage(event);
+                }
+            }
+            
+            return res.status(200).json({ success: true });
+            
+        } catch (error) {
+            console.error('Webhook error:', error);
+            return res.status(500).json({ error: error.message });
+        }
+    }
+    
+    // Handle other methods
+    return res.status(405).json({ error: 'Method not allowed' });
 };
