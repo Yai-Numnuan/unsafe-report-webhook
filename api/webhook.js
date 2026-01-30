@@ -162,7 +162,7 @@ async function handleTextMessage(event) {
     } else if (JSP_PRESETS[text]) {
         // ปุ่ม จป.เทคนิค
         await handleJSPPreset(event, text);
-    } else if (text.match(/^(ผ[ปกมบคสร][บกตสพรนค]?\.|กฟ[จสย]\.|อื่นๆ)/)) {
+    } else if (text.match(/^(ผ[ปกมบคสร][บกตสพรนคง]?\.|กฟ[จสย]\.|อื่นๆ)/)) {
         // เลือกหน่วยงานทีละอัน - ลงทะเบียนทันที
         await handleSelectUnitAndRegister(event, text);
     } else {
